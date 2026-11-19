@@ -54,6 +54,17 @@ class MeasurementConfig:
     units: str = "CELSIUS"
     nplc: float = 1.0
     open_detect: bool = True
+    # abweichender Thermoelement-Typ je Kanal (sonst tc_type)
+    channel_types: dict[int, str] = field(default_factory=dict)
+
+    def type_for(self, channel: int) -> str:
+        return self.channel_types.get(channel, self.tc_type)
+
+    def type_groups(self) -> dict[str, list[int]]:
+        groups: dict[str, list[int]] = {}
+        for ch in self.channels:
+            groups.setdefault(self.type_for(ch), []).append(ch)
+        return groups
 
 
 @dataclass
@@ -233,7 +244,6 @@ class Keithley3706A:
             "channel.open('allslots')",
             'dmm.func = "temperature"',
             "dmm.transducer = dmm.TEMP_THERMOCOUPLE",
-            f"dmm.thermocouple = dmm.THERMOCOUPLE_{cfg.tc_type}",
             f"dmm.refjunction = dmm.REF_JUNCTION_{cfg.ref_junction}",
             f"dmm.units = dmm.UNITS_{cfg.units}",
             f"dmm.nplc = {cfg.nplc:g}",
@@ -241,9 +251,16 @@ class Keithley3706A:
         ]
         if cfg.ref_junction == "SIMULATED":
             cmds.append(f"dmm.simreftemperature = {cfg.sim_ref_temp:g}")
+        # Eine DMM-Konfiguration pro Thermoelement-Typ, den Kanälen zugewiesen.
+        # scan.create() verwendet dann die jeweils zugewiesene Konfiguration.
+        for tc_type, chans in cfg.type_groups().items():
+            name = f"{CONFIG_NAME}_{tc_type}"
+            cmds += [
+                f"dmm.thermocouple = dmm.THERMOCOUPLE_{tc_type}",
+                f'dmm.configure.set("{name}")',
+                f'dmm.setconfig("{format_channel_list(chans)}", "{name}")',
+            ]
         cmds += [
-            f'dmm.configure.set("{CONFIG_NAME}")',
-            f'dmm.setconfig("{chan_list}", "{CONFIG_NAME}")',
             f"{BUFFER_NAME} = dmm.makebuffer({max(100, 2 * len(cfg.channels))})",
             f'scan.create("{chan_list}")',
             "format.data = format.ASCII",

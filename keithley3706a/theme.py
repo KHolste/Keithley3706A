@@ -40,6 +40,15 @@ DARK = Theme("dark", bg="#15171c", surface="#1e2128", surface_alt="#252932",
              success="#31c46c", warning="#f0a43a",
              plot_bg="#1e2128", plot_fg="#c9ced8", grid_alpha=0.22)
 
+CONTRAST = Theme("contrast", bg="#000000", surface="#0a0a0a", surface_alt="#161616",
+                 border="#ffffff", text="#ffffff", text_muted="#e0e0e0",
+                 accent="#ffd400", accent_text="#000000", danger="#ff3b3b",
+                 success="#00ff7f", warning="#ffb000",
+                 plot_bg="#000000", plot_fg="#ffffff", grid_alpha=0.35)
+
+THEME_MODES = [("system", "Auto", "Wie Windows"), ("light", "☀", "Hell"),
+               ("dark", "☾", "Dunkel"), ("contrast", "HK", "Hoher Kontrast")]
+
 # Gut unterscheidbare Linienfarben (auf hell und dunkel lesbar)
 CHANNEL_COLORS = [
     "#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899",
@@ -64,6 +73,8 @@ def resolve(mode: str) -> Theme:
         return DARK
     if mode == "light":
         return LIGHT
+    if mode == "contrast":
+        return CONTRAST
     return DARK if system_prefers_dark() else LIGHT
 
 
@@ -170,4 +181,30 @@ def stylesheet(t: Theme) -> str:
         border-bottom: 2px solid transparent;
     }}
     QTabBar::tab:selected {{ color: {t.text}; border-bottom: 2px solid {t.accent}; }}
+
+    QFrame#Banner {{ background: {t.danger}; border-radius: 8px; }}
+    QFrame#Banner QLabel {{ color: white; font-weight: 600; }}
+    QFrame#Banner QPushButton {{ background: rgba(255,255,255,0.18); color: white; border: none; }}
+    QFrame#Tile {{
+        background: {t.surface}; border: 2px solid {t.border}; border-radius: 14px;
+    }}
+    QFrame#Tile[alarm="true"] {{ border-color: {t.danger}; background: {_rgba(t.danger, 0.12)}; }}
+    QFrame#Tile[open="true"] {{ border-color: {t.warning}; }}
+    QMenuBar {{ background: {t.bg}; color: {t.text}; }}
+    QMenuBar::item:selected {{ background: {t.surface_alt}; border-radius: 4px; }}
+    QMenu {{ background: {t.surface}; color: {t.text}; border: 1px solid {t.border}; padding: 4px; }}
+    QMenu::item {{ padding: 5px 24px 5px 20px; border-radius: 4px; }}
+    QMenu::item:selected {{ background: {t.accent}; color: {t.accent_text}; }}
+    QMenu::separator {{ height: 1px; background: {t.border}; margin: 4px 8px; }}
+    QDockWidget {{ color: {t.text_muted}; font-weight: 600; }}
+    QDockWidget::title {{ padding: 6px 10px; background: {t.bg}; }}
+    QListWidget {{ background: {t.surface}; border: none; color: {t.text}; }}
+    QListWidget::item {{ padding: 3px 4px; border-bottom: 1px solid {t.border}; }}
+    QPlainTextEdit, QTextEdit {{
+        background: {t.surface_alt}; color: {t.text}; border: 1px solid {t.border}; border-radius: 6px;
+    }}
+    QDateTimeEdit, QTimeEdit {{
+        background: {t.surface_alt}; color: {t.text}; border: 1px solid {t.border};
+        border-radius: 6px; padding: 4px 8px; min-height: 20px;
+    }}
     """

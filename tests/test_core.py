@@ -39,8 +39,9 @@ def test_recorder_excel_de(tmp_path):
     rec.close()
     lines = rec.path.read_text(encoding="utf-8-sig").splitlines()
     assert lines[0] == "# Typ;K"
-    assert lines[1] == "Zeitstempel;Zeit seit Start [s];1001 Ofen [°C];1002 [°C]"
-    assert lines[2].endswith(";1,500;24,5000;")
+    assert lines[1].startswith("# Aufnahmestart;")
+    assert lines[2] == "Zeitstempel;Zeit seit Start [s];1001 Ofen [°C];1002 [°C];Ereignis"
+    assert lines[3].endswith(";1,500;24,5000;;")
 
 
 def test_history_ring():

@@ -14,7 +14,8 @@ from .instrument import InstrumentError, MeasurementConfig, ScanResult, make_ins
 class AcquisitionThread(QThread):
     connected = Signal(str, object)   # idn, {slot: card}
     disconnected = Signal()
-    scan_done = Signal(object)         # ScanResult
+    scan_started = Signal()
+    scan_done = Signal(object, float)  # ScanResult, Scandauer [s]
     error = Signal(str)
     status = Signal(str)
 
@@ -29,6 +30,8 @@ class AcquisitionThread(QThread):
         self._auto_reconnect = auto_reconnect
         self._stop = threading.Event()
         self._wake = threading.Event()
+        self._paused = threading.Event()
+        self._single = threading.Event()
         self._commands: queue.Queue = queue.Queue()
 
     # ---------------------------------------------------------------- API (GUI-Thread)
@@ -44,6 +47,21 @@ class AcquisitionThread(QThread):
         self._commands.put(("config", cfg))
         self._wake.set()
 
+    def set_paused(self, paused: bool) -> None:
+        if paused:
+            self._paused.set()
+        else:
+            self._paused.clear()
+        self._wake.set()
+
+    @property
+    def paused(self) -> bool:
+        return self._paused.is_set()
+
+    def single_scan(self) -> None:
+        self._single.set()
+        self._wake.set()
+
     # ---------------------------------------------------------------- Thread
     def run(self) -> None:
         inst = None
@@ -55,7 +73,6 @@ class AcquisitionThread(QThread):
                     inst.connect()
                     inst.configure(self._config)
                     self.connected.emit(inst.idn, dict(inst.cards))
-                    self.status.emit("Verbunden – Messung läuft")
 
                 while not self._commands.empty():
                     kind, payload = self._commands.get_nowait()
@@ -64,12 +81,19 @@ class AcquisitionThread(QThread):
                         inst.configure(payload)
                         self.status.emit("Konfiguration übernommen")
 
+                if self._paused.is_set() and not self._single.is_set():
+                    self._wake.wait(0.5)
+                    self._wake.clear()
+                    continue
+                self._single.clear()
+
                 t_start = time.monotonic()
+                self.scan_started.emit()
                 result: ScanResult = inst.scan()
-                self.scan_done.emit(result)
+                self.scan_done.emit(result, time.monotonic() - t_start)
 
                 remaining = self._interval - (time.monotonic() - t_start)
-                if remaining > 0:
+                if remaining > 0 and not self._paused.is_set():
                     self._wake.wait(remaining)
                     self._wake.clear()
             except Exception as exc:  # VISA-Fehler, Timeout, Gerätefehler …

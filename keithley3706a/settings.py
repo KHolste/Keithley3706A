@@ -8,17 +8,20 @@ from pathlib import Path
 from PySide6.QtCore import QSettings, QStandardPaths
 
 from . import ORG_NAME, SETTINGS_APP
+from .channel_props import ChannelProps, props_from_json, props_to_json
 from .instrument import MeasurementConfig, format_channel_list, parse_channel_list
+from .notify import EmailConfig
+from .secret import decrypt, encrypt
 
 
-def _default_folder() -> str:
+def default_folder() -> str:
     docs = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)
     return str(Path(docs) / "Keithley3706A_Messdaten")
 
 
 class AppSettings:
-    def __init__(self):
-        self.qs = QSettings(ORG_NAME, SETTINGS_APP)
+    def __init__(self, app_name: str | None = None):
+        self.qs = QSettings(ORG_NAME, app_name or SETTINGS_APP)
 
     # -------------------------------------------------------- generische Helfer
     def _get(self, key, default, typ=str):
@@ -54,6 +57,7 @@ class AppSettings:
         cfg.units = self._get("meas/units", cfg.units)
         cfg.nplc = self._get("meas/nplc", cfg.nplc, float)
         cfg.open_detect = self._get("meas/open_detect", cfg.open_detect, bool)
+        cfg.channel_types = {ch: p.tc_type for ch, p in self.channel_props.items() if p.tc_type}
         return cfg
 
     def set_measurement_config(self, cfg: MeasurementConfig) -> None:
@@ -79,13 +83,22 @@ class AppSettings:
     interval_s = _prop("meas/interval_s", 1.0, float)
     theme = _prop("ui/theme", "system")
     time_window_s = _prop("ui/time_window_s", 600, int)
+    rate_window_s = _prop("ui/rate_window_s", 60, int)
     csv_format = _prop("csv/format", "excel_de")
     csv_prefix = _prop("csv/prefix", "Temperaturen")
+    rotate_daily = _prop("csv/rotate_daily", True, bool)
+    write_sidecar = _prop("csv/write_sidecar", True, bool)
+    last_note = _prop("csv/last_note", "")
+    alarm_hysteresis = _prop("alarm/hysteresis", 0.5, float)
+    alarm_sound = _prop("alarm/sound", True, bool)
+    alarm_tray = _prop("alarm/tray", True, bool)
+    alarm_open = _prop("alarm/open_is_alarm", False, bool)
+    last_profile_dir = _prop("ui/last_profile_dir", "")
     del _prop
 
     @property
     def csv_folder(self) -> str:
-        return self._get("csv/folder", "") or _default_folder()
+        return self._get("csv/folder", "") or default_folder()
 
     @csv_folder.setter
     def csv_folder(self, value: str) -> None:
@@ -106,3 +119,38 @@ class AppSettings:
     @hidden_channels.setter
     def hidden_channels(self, value: set[int]) -> None:
         self.qs.setValue("ui/hidden", json.dumps(sorted(value)))
+
+    @property
+    def channel_props(self) -> dict[int, ChannelProps]:
+        return props_from_json(self._json("meas/channel_props", {}))
+
+    @channel_props.setter
+    def channel_props(self, value: dict[int, ChannelProps]) -> None:
+        self.qs.setValue("meas/channel_props", json.dumps(props_to_json(value)))
+
+    # -------------------------------------------------------- E-Mail
+    @property
+    def email(self) -> EmailConfig:
+        return EmailConfig(
+            enabled=self._get("email/enabled", False, bool),
+            host=self._get("email/host", ""),
+            port=self._get("email/port", 587, int),
+            security=self._get("email/security", "starttls"),
+            username=self._get("email/username", ""),
+            password=decrypt(self._get("email/password", "")),
+            sender=self._get("email/sender", ""),
+            recipients=[r for r in self._json("email/recipients", []) if r],
+            min_interval_min=self._get("email/min_interval_min", 15.0, float),
+        )
+
+    @email.setter
+    def email(self, cfg: EmailConfig) -> None:
+        self.qs.setValue("email/enabled", cfg.enabled)
+        self.qs.setValue("email/host", cfg.host)
+        self.qs.setValue("email/port", cfg.port)
+        self.qs.setValue("email/security", cfg.security)
+        self.qs.setValue("email/username", cfg.username)
+        self.qs.setValue("email/password", encrypt(cfg.password))
+        self.qs.setValue("email/sender", cfg.sender)
+        self.qs.setValue("email/recipients", json.dumps(cfg.recipients))
+        self.qs.setValue("email/min_interval_min", cfg.min_interval_min)

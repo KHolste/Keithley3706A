@@ -5,3 +5,6 @@ venv/
 .pytest_cache/
 *.csv
 *.pdf
+build/
+dist/
+*.spec
