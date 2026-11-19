@@ -165,3 +165,16 @@ def test_sntp_packet_roundtrip():
 def test_secret_roundtrip():
     assert decrypt(encrypt("geheim äö")) == "geheim äö"
     assert encrypt("") == "" and decrypt("") == ""
+
+
+def test_instance_lock():
+    from keithley3706a.single_instance import InstanceLock
+    name = "Keithley3706A-Test-Lock"
+    first = InstanceLock(name)
+    assert first.acquired
+    second = InstanceLock(name)
+    assert not second.acquired
+    first.release()
+    third = InstanceLock(name)
+    assert third.acquired
+    third.release()

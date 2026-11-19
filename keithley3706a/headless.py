@@ -15,21 +15,39 @@ from pathlib import Path
 
 from . import APP_NAME, __version__
 from .channel_props import apply_offsets
-from .instrument import REF_JUNCTIONS, TEMP_UNITS, ScanResult, make_instrument
-from .timesync import DEFAULT_SERVERS, Clock, best_of
+from .instrument import (REF_JUNCTIONS, SIMULATION_RESOURCE, TEMP_UNITS, ScanResult,
+                         make_instrument)
 from .profile import parse_profile
 from .recorder import CsvRecorder
+from .single_instance import InstanceLock
+from .timesync import DEFAULT_SERVERS, Clock, best_of
 
 
 def run(profile: dict, duration_s: float | None = None, folder: str | None = None,
         resource: str | None = None, out=sys.stdout) -> Path:
     p = parse_profile(profile)
-    cfg = p["config"]
-    csv_opts = p["csv"]
-    folder = folder or csv_opts.get("folder") or "."
     resource = resource or p["resource"]
     if not resource:
         raise ValueError("Keine VISA-Ressource im Profil – mit --ressource angeben.")
+    lock = None
+    if resource != SIMULATION_RESOURCE:
+        lock = InstanceLock()
+        if not lock.acquired:
+            raise RuntimeError("Der Monitor läuft bereits (GUI oder andere Headless-Messung). "
+                               "Der Keithley kann nur von einem Programm gleichzeitig "
+                               "ausgelesen werden.")
+    try:
+        return _run(p, profile, resource, duration_s, folder, out)
+    finally:
+        if lock is not None:
+            lock.release()
+
+
+def _run(p: dict, profile: dict, resource: str, duration_s: float | None,
+         folder: str | None, out) -> Path:
+    cfg = p["config"]
+    csv_opts = p["csv"]
+    folder = folder or csv_opts.get("folder") or "."
     clock = Clock()
     time_basis = "PC-Uhr, nicht mit Zeitserver abgeglichen"
     servers = profile.get("time", {}).get("ntp_servers", DEFAULT_SERVERS)

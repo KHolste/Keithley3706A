@@ -284,6 +284,10 @@ class MainWindow(QMainWindow):
         self.status_label.setMinimumWidth(220)
         row.addWidget(self.status_label, 1)
 
+        # Zweite Zeile: in einer Zeile wäre die Kopfzeile breiter als ein Full-HD-Bildschirm
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        lay.addLayout(row)
         self.clock_label = QLabel()
         self.clock_label.setTextFormat(Qt.RichText)
         self.clock_label.setToolTip("Aktuelle Zeit (bei aktivem Zeitabgleich auf Serverzeit "
@@ -294,6 +298,7 @@ class MainWindow(QMainWindow):
         self.config_label = QLabel()
         self.config_label.setObjectName("Muted")
         row.addWidget(self.config_label)
+        row.addStretch(1)
 
         self.mute_btn = QPushButton("🔔 Töne an")
         self.mute_btn.setCheckable(True)

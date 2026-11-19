@@ -9,6 +9,10 @@ GUI zum Auslesen von Thermoelementen an einem Keithley 3706A (System Switch/Mult
 
 Voraussetzungen: Python ≥ 3.11 und eine VISA-Implementierung (NI-VISA oder Keysight IO Libraries).
 
+Es läuft immer nur **ein** Exemplar (der Keithley verträgt nur einen VISA-Client): Ein zweiter
+Start – egal ob `start.bat` oder exe – holt das bereits offene Fenster nach vorn. Eine
+Headless-Messung am echten Gerät verweigert den Start, solange die GUI läuft (und umgekehrt).
+
 ## Funktionen
 
 **Anzeige**
@@ -118,6 +122,8 @@ keithley3706a/
   notify.py         Ton, E-Mail                    secret.py       DPAPI-Verschlüsselung
   scheduler.py      geplante Aufnahme              profile.py      Profile, Skript-Export
   headless.py       Messung ohne GUI               channel_props.py Typ/Offset/Alarm je Kanal
+  single_instance.py Sperre gegen Doppelstart       crashlog.py     Protokoll, Absturzberichte
+  timesync.py       SNTP-Zeitabgleich, MJD         sounds.py       Signaltöne, Melodie
   main_window.py    Hauptfenster                   tile_window.py  Kachelansicht
   settings*.py, dialogs.py, theme.py, icons.py, history.py
 tests/              pytest

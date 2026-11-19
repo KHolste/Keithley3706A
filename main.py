@@ -44,8 +44,29 @@ def _report(title: str, details: str, path) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
 
+def _already_running() -> int:
+    """Zweiter Start: vorhandenes Fenster nach vorn holen statt das Gerät doppelt zu öffnen."""
+    from PySide6.QtWidgets import QApplication, QMessageBox
+
+    from keithley3706a import APP_NAME
+    from keithley3706a.single_instance import activate_running
+    app = QApplication.instance() or QApplication(sys.argv)
+    if not activate_running():
+        QMessageBox.information(
+            None, APP_NAME,
+            "Das Programm läuft bereits (eventuell unter einem anderen Benutzer, gerade noch "
+            "beim Starten oder als Messung ohne Oberfläche).\n\nDer Keithley kann nur von einem "
+            "Programm gleichzeitig ausgelesen werden, daher wird kein zweites Exemplar gestartet.")
+    del app
+    return 0
+
+
 def main() -> int:
     global _window
+    from keithley3706a.single_instance import InstanceLock, serve_activation
+    lock = InstanceLock()
+    if not lock.acquired:
+        return _already_running()
     notes = crashlog.install(context_provider=_context, report_callback=_report)
 
     from PySide6.QtWidgets import QApplication, QMessageBox
@@ -67,11 +88,13 @@ def main() -> int:
     app.setWindowIcon(app_icon())
     _window = MainWindow()
     _window.show()
+    _server = serve_activation(_window)  # noqa: F841 – lebt mit dem Fenster
     for note in notes:
         _window._log(note.split("\n")[0], "warn")
         QMessageBox.warning(_window, "Letzte Sitzung", note)
     code = app.exec()
     crashlog.shutdown()
+    lock.release()
     return code
 
 
