@@ -124,6 +124,15 @@ def test_headless_simulation(tmp_path):
     assert path.with_suffix(".json").exists()
 
 
+def test_sound_sequences():
+    from keithley3706a.sounds import MIN_BEEP_S, alarm_pattern, korobeiniki, total_duration
+    mel = korobeiniki()
+    assert all(d >= MIN_BEEP_S for d, f in mel if f > 0)      # Gerätegrenze 0,1 s
+    assert 10 < total_duration(mel) < 20
+    assert alarm_pattern("high", 2000)[0][1] < alarm_pattern("high", 2000)[1][1]   # steigend
+    assert alarm_pattern("low", 2000)[0][1] > alarm_pattern("low", 2000)[1][1]     # fallend
+
+
 def test_secret_roundtrip():
     assert decrypt(encrypt("geheim äö")) == "geheim äö"
     assert encrypt("") == "" and decrypt("") == ""

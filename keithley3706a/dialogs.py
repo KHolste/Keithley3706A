@@ -248,7 +248,8 @@ SHORTCUTS = [
     ("Strg+O", "Profil laden"),
     ("Strg+P", "Plot exportieren"),
     ("F11", "Vollbild"),
-    ("Esc", "Alarmmeldung quittieren"),
+    ("Esc", "Alarm quittieren (Banner aus, Tonwiederholung stoppen)"),
+    ("Strg+M", "Alle Töne stummschalten / wieder einschalten"),
 ]
 
 

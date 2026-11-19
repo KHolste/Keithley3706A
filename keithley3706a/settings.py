@@ -93,6 +93,9 @@ class AppSettings:
     alarm_sound = _prop("alarm/sound", True, bool)
     alarm_tray = _prop("alarm/tray", True, bool)
     alarm_open = _prop("alarm/open_is_alarm", False, bool)
+    alarm_device_beep = _prop("alarm/device_beep", True, bool)
+    alarm_beep_freq = _prop("alarm/beep_freq", 2400, int)
+    alarm_repeat_s = _prop("alarm/repeat_s", 30, int)
     last_profile_dir = _prop("ui/last_profile_dir", "")
     del _prop
 

@@ -31,7 +31,8 @@ def _muted(text: str) -> QLabel:
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, settings, cfg: MeasurementConfig, recording: bool, parent=None):
+    def __init__(self, settings, cfg: MeasurementConfig, recording: bool, parent=None,
+                 test_beep=None):
         super().__init__(parent)
         self.setWindowTitle("Einstellungen")
         self.setMinimumWidth(560)
@@ -138,9 +139,41 @@ class SettingsDialog(QDialog):
         self.hysteresis.setToolTip("Ein Alarm endet erst, wenn der Wert um diesen Betrag "
                                    "zurück im erlaubten Bereich ist (verhindert Flattern).")
         f.addRow("Hysterese:", self.hysteresis)
-        self.alarm_sound = QCheckBox("Warnton abspielen")
+        self.alarm_sound = QCheckBox("Warnton am PC abspielen")
         self.alarm_sound.setChecked(settings.alarm_sound)
         f.addRow("", self.alarm_sound)
+        self.device_beep = QCheckBox("Signalton am Keithley 3706A (eingebauter Piezo)")
+        self.device_beep.setChecked(settings.alarm_device_beep)
+        self.device_beep.setToolTip("Oben: steigender Doppelton · Unten: fallender Doppelton · "
+                                    "Fühlerbruch: dreifacher Ton")
+        f.addRow("", self.device_beep)
+        self.beep_freq = QSpinBox()
+        self.beep_freq.setRange(200, 10000)
+        self.beep_freq.setSingleStep(100)
+        self.beep_freq.setSuffix(" Hz")
+        self.beep_freq.setValue(settings.alarm_beep_freq)
+        self.beep_freq.setToolTip("Piezos sind meist um 2–4 kHz am lautesten")
+        from PySide6.QtWidgets import QHBoxLayout, QPushButton
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.addWidget(self.beep_freq, 1)
+        test_beep_btn = QPushButton("Test-Ton")
+        test_beep_btn.setEnabled(test_beep is not None)
+        test_beep_btn.setToolTip("Spielt das Signal am Gerät ab (Gerät muss verbunden sein)")
+        if test_beep is not None:
+            test_beep_btn.clicked.connect(lambda: test_beep(self.beep_freq.value()))
+        h.addWidget(test_beep_btn)
+        f.addRow("Frequenz Gerätesignal:", row)
+        self.repeat = QSpinBox()
+        self.repeat.setRange(0, 3600)
+        self.repeat.setSuffix(" s")
+        self.repeat.setSpecialValueText("nicht wiederholen")
+        self.repeat.setValue(settings.alarm_repeat_s)
+        self.repeat.setToolTip("Töne wiederholen, solange ein Alarm aktiv und nicht quittiert ist")
+        f.addRow("Wiederholen alle:", self.repeat)
+        f.addRow("", _muted("Alle Töne lassen sich jederzeit mit dem Knopf „🔔“ in der Kopfzeile "
+                            "bzw. Strg+M stummschalten; Esc quittiert die aktuellen Alarme."))
         self.alarm_tray = QCheckBox("Windows-Benachrichtigung anzeigen")
         self.alarm_tray.setChecked(settings.alarm_tray)
         f.addRow("", self.alarm_tray)
@@ -278,6 +311,9 @@ class SettingsDialog(QDialog):
         settings.write_sidecar = self.sidecar.isChecked()
         settings.alarm_hysteresis = self.hysteresis.value()
         settings.alarm_sound = self.alarm_sound.isChecked()
+        settings.alarm_device_beep = self.device_beep.isChecked()
+        settings.alarm_beep_freq = self.beep_freq.value()
+        settings.alarm_repeat_s = self.repeat.value()
         settings.alarm_tray = self.alarm_tray.isChecked()
         settings.alarm_open = self.alarm_open.isChecked()
         settings.email = self.email_config()

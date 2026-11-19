@@ -28,7 +28,14 @@ Voraussetzungen: Python ≥ 3.11 und eine VISA-Implementierung (NI-VISA oder Key
 
 **Alarme**
 - Ober-/Untergrenze je Kanal mit Hysterese, optional Fühlerbruch als Alarm
-- Rote Tabellenzeile und Kachel, Alarmbanner, Warnton, Windows-Benachrichtigung
+- Rote Tabellenzeile und Kachel, Alarmbanner, Warnton am PC, Windows-Benachrichtigung
+- Signalton am Gerät (eingebauter Piezo, `beeper.beep`): oben steigend, unten fallend,
+  Fühlerbruch dreifach; Frequenz einstellbar, Wiederholung bis zum Quittieren
+- **Alle Töne jederzeit abschaltbar:** Knopf „🔔/🔕“ bzw. Strg+M (stoppt auch laufende Töne
+  sofort), Esc quittiert; PC-Ton und Gerätesignal einzeln abschaltbar. „Stumm“ gilt bis zum
+  Programmende, damit nach einem Neustart kein Alarm überhört wird
+- Messung → „Melodie am Gerät abspielen“: Korobeiniki (Tetris-Melodie, Volkslied, gemeinfrei);
+  während der Melodie (ca. 13 s) wird nicht gemessen
 - E-Mail über SMTP (STARTTLS/SSL), Sendepause je Kanal; Passwort per Windows-DPAPI verschlüsselt
 
 **Aufnahme & Reproduzierbarkeit**
@@ -50,7 +57,8 @@ Voraussetzungen: Python ≥ 3.11 und eine VISA-Implementierung (NI-VISA oder Key
 | Z | Rechteck-Zoom | Strg+S / Strg+O | Profil speichern / laden |
 | L | Live folgen | Strg+P | Plot exportieren |
 | T | Kachelansicht | F11 | Vollbild |
-| Esc | Alarmbanner quittieren | F1 | Tastenkürzel anzeigen |
+| Esc | Alarm quittieren | F1 | Tastenkürzel anzeigen |
+| Strg+M | Alle Töne stumm / an | | |
 
 ## Headless (ohne Oberfläche)
 ```

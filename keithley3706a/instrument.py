@@ -271,6 +271,24 @@ class Keithley3706A:
         self.check_errors()
         self._config = cfg
 
+    def play_note(self, duration: float, freq: float) -> None:
+        """Ein Ton (freq > 0) oder eine Pause; kehrt erst nach Ende zurück.
+
+        beeper.enable wird nur für den Ton eingeschaltet und danach wiederhergestellt,
+        damit eine am Frontpanel gewählte Einstellung (z. B. Tastenklicks aus) erhalten bleibt.
+        """
+        if freq > 0:
+            cmd = (f"local e = beeper.enable beeper.enable = beeper.ON "
+                   f"beeper.beep({max(0.1, duration):.3f}, {freq:.1f}) beeper.enable = e")
+        else:
+            cmd = f"delay({max(0.0, duration):.3f})"
+        old = self._inst.timeout
+        self._inst.timeout = int(duration * 1000) + 5000
+        try:
+            self.query(cmd + " print(1)")
+        finally:
+            self._inst.timeout = old
+
     def scan(self) -> ScanResult:
         if self._config is None:
             raise InstrumentError("Nicht konfiguriert")
@@ -310,6 +328,17 @@ class SimulatedInstrument:
 
     def configure(self, cfg: MeasurementConfig) -> None:
         self._config = cfg
+
+    def play_note(self, duration: float, freq: float) -> None:
+        """Simulator: Ton über den PC-Lautsprecher (Windows), sonst nur warten."""
+        if freq > 0:
+            try:
+                import winsound
+                winsound.Beep(int(min(max(freq, 37), 32767)), int(max(0.1, duration) * 1000))
+                return
+            except Exception:
+                pass
+        time.sleep(max(0.0, duration))
 
     def scan(self) -> ScanResult:
         cfg = self._config or MeasurementConfig()

@@ -18,6 +18,7 @@ class AcquisitionThread(QThread):
     scan_done = Signal(object, float)  # ScanResult, Scandauer [s]
     error = Signal(str)
     status = Signal(str)
+    sound_done = Signal(str, bool)     # Bezeichnung, abgebrochen?
 
     RECONNECT_DELAY_S = 3.0
 
@@ -32,6 +33,7 @@ class AcquisitionThread(QThread):
         self._wake = threading.Event()
         self._paused = threading.Event()
         self._single = threading.Event()
+        self._stop_sound = threading.Event()
         self._commands: queue.Queue = queue.Queue()
 
     # ---------------------------------------------------------------- API (GUI-Thread)
@@ -62,6 +64,23 @@ class AcquisitionThread(QThread):
         self._single.set()
         self._wake.set()
 
+    def play_sound(self, notes: list[tuple[float, float]], label: str) -> None:
+        """Tonfolge am Gerät abspielen (zwischen zwei Scans, Note für Note)."""
+        self._stop_sound.clear()
+        self._commands.put(("sound", (list(notes), label)))
+        self._wake.set()
+
+    def stop_sound(self) -> None:
+        """Laufende und wartende Tonfolgen sofort beenden (spätestens nach der aktuellen Note)."""
+        self._stop_sound.set()
+        kept = []
+        while not self._commands.empty():
+            item = self._commands.get_nowait()
+            if item[0] != "sound":
+                kept.append(item)
+        for item in kept:
+            self._commands.put(item)
+
     # ---------------------------------------------------------------- Thread
     def run(self) -> None:
         inst = None
@@ -80,6 +99,15 @@ class AcquisitionThread(QThread):
                         self._config = payload
                         inst.configure(payload)
                         self.status.emit("Konfiguration übernommen")
+                    elif kind == "sound":
+                        notes, label = payload
+                        aborted = False
+                        for duration, freq in notes:
+                            if self._stop_sound.is_set() or self._stop.is_set():
+                                aborted = True
+                                break
+                            inst.play_note(duration, freq)
+                        self.sound_done.emit(label, aborted)
 
                 if self._paused.is_set() and not self._single.is_set():
                     self._wake.wait(0.5)

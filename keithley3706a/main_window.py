@@ -41,6 +41,7 @@ from .notify import EmailNotifier, play_alarm_sound
 from .profile import build_profile, export_script, load_profile, save_profile
 from .recorder import CsvRecorder
 from .scheduler import ScheduleRunner
+from .sounds import alarm_pattern, korobeiniki, test_pattern, total_duration
 from .settings import AppSettings
 from .settings_dialog import SettingsDialog
 from .theme import THEME_MODES, Theme, apply_theme, channel_color, resolve
@@ -118,6 +119,10 @@ class MainWindow(QMainWindow):
         self.markers: list[tuple[float, str, pg.InfiniteLine]] = []
         self.overlays: list[dict] = []
         self.pending_events: list[str] = []
+        # Töne: Stumm gilt bewusst nur bis zum Programmende (Sicherheit)
+        self.sound_muted = False
+        self.alarm_acked = True
+        self._last_alarm_sound = 0.0
         self._busy = False
         self._error_state = False
         self._plot_dirty = False
@@ -257,6 +262,12 @@ class MainWindow(QMainWindow):
         self.config_label = QLabel()
         self.config_label.setObjectName("Muted")
         row.addWidget(self.config_label)
+
+        self.mute_btn = QPushButton("🔔 Töne an")
+        self.mute_btn.setCheckable(True)
+        self.mute_btn.setToolTip("Alle Alarmtöne und Melodien sofort stummschalten (Strg+M)")
+        self.mute_btn.toggled.connect(self._set_muted)
+        row.addWidget(self.mute_btn)
 
         settings_btn = QPushButton("⚙  Einstellungen")
         settings_btn.clicked.connect(self._open_settings)
@@ -508,6 +519,13 @@ class MainWindow(QMainWindow):
         self._act(m, "Einstellungen…", self._open_settings, "Ctrl+E")
         self._act(m, "Kanal-Einstellungen…", self._open_channel_dialog, "Ctrl+Shift+K")
         self._act(m, "Statistik zurücksetzen", self._reset_stats)
+        m.addSeparator()
+        self.mute_action = self._act(m, "Alle Töne stummschalten", None, "Ctrl+M",
+                                     checkable=True)
+        self.mute_action.toggled.connect(self.mute_btn.setChecked)
+        self._act(m, "Gerätesignal testen", lambda: self._test_device_beep())
+        self._act(m, "Melodie am Gerät abspielen (Korobeiniki / Tetris)", self._play_melody)
+        self._act(m, "Ton am Gerät stoppen", self._stop_sounds)
 
         m = mb.addMenu("&Aufnahme")
         self._act(m, "Aufnahme starten / beenden", self._toggle_recording, "Ctrl+R")
@@ -838,6 +856,7 @@ class MainWindow(QMainWindow):
         self.thread.scan_done.connect(self._on_scan)
         self.thread.error.connect(self._on_error)
         self.thread.status.connect(self._on_status)
+        self.thread.sound_done.connect(self._on_sound_done)
         self.thread.finished.connect(self._on_thread_finished)
         self.thread.set_paused(self.pause_btn.isChecked())
         self.thread.start()
@@ -1013,6 +1032,7 @@ class MainWindow(QMainWindow):
                 self._refresh_table_values()
         if self.schedule is not None:
             self._run_schedule(None)
+        self._repeat_alarm_sounds()
         if self.recorder is not None or self.schedule is not None:
             self._update_record_ui()
         self._tick_count = getattr(self, "_tick_count", 0) + 1
@@ -1059,8 +1079,8 @@ class MainWindow(QMainWindow):
         self.pending_events.append(text)
         self._log(text, "alarm" if ev.is_alarm else "ok")
         if ev.is_alarm:
-            if self.settings.alarm_sound:
-                play_alarm_sound()
+            self.alarm_acked = False
+            self._alarm_sounds(ev.state.value)
             if self.settings.alarm_tray and self.tray.isVisible():
                 self.tray.showMessage("Temperatur-Alarm", text, QSystemTrayIcon.Warning, 8000)
             self.mailer.notify(
@@ -1085,7 +1105,88 @@ class MainWindow(QMainWindow):
         self.banner_bar.show()
 
     def _ack_banner(self) -> None:
+        """Quittieren: Banner aus, Wiederholung der Töne beenden, laufenden Ton stoppen."""
+        if not self.alarm_acked and self.alarms.active():
+            self._log("Alarm quittiert")
+        self.alarm_acked = True
         self.banner_bar.hide()
+        if self.thread is not None:
+            self.thread.stop_sound()
+
+    # ================================================================== Töne
+    def _alarm_sounds(self, kind: str) -> None:
+        if self.sound_muted:
+            return
+        self._last_alarm_sound = time.time()
+        if self.settings.alarm_sound:
+            play_alarm_sound()
+        if self.settings.alarm_device_beep and self.thread is not None:
+            self.thread.play_sound(alarm_pattern(kind, self.settings.alarm_beep_freq),
+                                   "Alarmsignal")
+
+    def _repeat_alarm_sounds(self) -> None:
+        active = self.alarms.active()
+        rep = self.settings.alarm_repeat_s
+        if (not active or self.alarm_acked or self.sound_muted or rep <= 0
+                or time.time() - self._last_alarm_sound < rep):
+            return
+        # wichtigster Zustand zuerst: Grenzwert vor Fühlerbruch
+        states = set(s.value for s in active.values())
+        kind = "high" if "high" in states else "low" if "low" in states else "open"
+        self._alarm_sounds(kind)
+
+    def _set_muted(self, muted: bool) -> None:
+        self.sound_muted = muted
+        self.mute_btn.setText("🔕 Stumm" if muted else "🔔 Töne an")
+        self.mute_btn.setObjectName("Danger" if muted else "")
+        self._repolish(self.mute_btn)
+        if self.mute_action.isChecked() != muted:
+            self.mute_action.setChecked(muted)
+        if muted:
+            self._stop_sounds()
+            self._log("Alle Töne stummgeschaltet (bis zum Aufheben oder Programmende)", "warn")
+        else:
+            self._log("Töne wieder eingeschaltet")
+
+    def _stop_sounds(self) -> None:
+        if self.thread is not None:
+            self.thread.stop_sound()
+
+    def _require_sound_possible(self) -> bool:
+        if self.thread is None:
+            QMessageBox.information(self, "Nicht verbunden", "Bitte zuerst mit dem Gerät verbinden.")
+            return False
+        if self.sound_muted:
+            QMessageBox.information(self, "Stumm", "Töne sind stummgeschaltet (Knopf „🔕 Stumm“ "
+                                    "bzw. Strg+M).")
+            return False
+        return True
+
+    def _test_device_beep(self, freq: int | None = None) -> None:
+        if self._require_sound_possible():
+            self.thread.play_sound(test_pattern(freq or self.settings.alarm_beep_freq),
+                                   "Test-Ton")
+
+    def _play_melody(self) -> None:
+        if not self._require_sound_possible():
+            return
+        notes = korobeiniki()
+        dur = total_duration(notes)
+        if self.recorder is not None:
+            ret = QMessageBox.question(
+                self, "Aufnahme läuft",
+                f"Während der Melodie (ca. {dur:.0f} s) misst das Gerät nicht – in der Aufnahme "
+                "entsteht eine Lücke. Trotzdem abspielen?")
+            if ret != QMessageBox.Yes:
+                return
+            self.pending_events.append("Melodie abgespielt (Messlücke)")
+        self.thread.play_sound(notes, "Melodie")
+        self._log(f"Melodie wird abgespielt (ca. {dur:.0f} s, Messung pausiert) – "
+                  "Stopp: Strg+M oder Messung → Ton am Gerät stoppen")
+
+    def _on_sound_done(self, label: str, aborted: bool) -> None:
+        if label != "Alarmsignal":
+            self._log(f"{label} {'abgebrochen' if aborted else 'beendet'}")
 
     # ================================================================== Ereignisprotokoll
     def _log(self, text: str, kind: str = "info") -> None:
@@ -1657,7 +1758,8 @@ class MainWindow(QMainWindow):
 
     # ================================================================== Einstellungen
     def _open_settings(self) -> None:
-        dlg = SettingsDialog(self.settings, self.cfg, self.recorder is not None, self)
+        dlg = SettingsDialog(self.settings, self.cfg, self.recorder is not None, self,
+                             test_beep=self._test_device_beep)
         if dlg.exec() != SettingsDialog.Accepted:
             return
         new_cfg = dlg.result_config(self.cfg.channel_types)
