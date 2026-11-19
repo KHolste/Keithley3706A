@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import shutil
 import time
 from datetime import datetime
 from pathlib import Path
@@ -980,6 +981,10 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Speicherfehler",
                                      f"CSV-Datei konnte nicht geschrieben werden:\n{exc}\n\n"
                                      "Die Aufnahme wurde beendet.")
+        else:
+            # Ohne Aufnahme nicht ansammeln (sonst unbegrenztes Wachstum und alte
+            # Ereignisse in der ersten Zeile der nächsten Aufnahme)
+            self.pending_events.clear()
         self._update_status_dot()
         self._refresh_table_values()
         self._update_record_ui()
@@ -1010,6 +1015,33 @@ class MainWindow(QMainWindow):
             self._run_schedule(None)
         if self.recorder is not None or self.schedule is not None:
             self._update_record_ui()
+        self._tick_count = getattr(self, "_tick_count", 0) + 1
+        if self.recorder is not None and self._tick_count % 60 == 0:
+            self._check_disk_space()
+
+    # ================================================================== Speicherplatz
+    DISK_WARN_BYTES = 1_000_000_000     # 1 GB: Warnung
+    DISK_STOP_BYTES = 100_000_000       # 100 MB: Aufnahme sicher beenden
+
+    def _free_bytes(self) -> int | None:
+        try:
+            return shutil.disk_usage(self.settings.csv_folder).free
+        except OSError:
+            return None
+
+    def _check_disk_space(self) -> None:
+        free = self._free_bytes()
+        if free is None:
+            return
+        if free < self.DISK_STOP_BYTES:
+            self._stop_recording()
+            self._log(f"Aufnahme beendet: nur noch {free / 1e6:.0f} MB frei", "error")
+            QMessageBox.critical(self, "Speicherplatz",
+                                 f"Auf dem Laufwerk sind nur noch {free / 1e6:.0f} MB frei.\n"
+                                 "Die Aufnahme wurde sicher beendet, die Datei ist vollständig.")
+        elif free < self.DISK_WARN_BYTES and not getattr(self, "_disk_warned", False):
+            self._disk_warned = True
+            self._log(f"Wenig Speicherplatz: {free / 1e9:.2f} GB frei", "warn")
 
     # ================================================================== Alarme
     def _handle_alarm(self, ev: AlarmEvent) -> None:
@@ -1501,6 +1533,13 @@ class MainWindow(QMainWindow):
         folder = self.settings.csv_folder
         self.settings.csv_prefix = self.prefix_edit.text().strip()
         self.settings.last_note = self.note_edit.text().strip()
+        free = self._free_bytes()
+        if free is not None and free < self.DISK_STOP_BYTES:
+            QMessageBox.critical(self, "Speicherplatz",
+                                 f"Im Zielordner sind nur {free / 1e6:.0f} MB frei. "
+                                 "Bitte einen anderen Ordner wählen.")
+            return False
+        self._disk_warned = False
         try:
             self.recorder = CsvRecorder(folder, self.cfg.channels, self.labels,
                                         TEMP_UNITS[self.cfg.units], self._metadata(),
