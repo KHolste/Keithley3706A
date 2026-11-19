@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import shutil
@@ -12,7 +13,9 @@ from pathlib import Path
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QByteArray, QEvent, QRectF, QSize, Qt, QTimer, QUrl
+import threading
+
+from PySide6.QtCore import QByteArray, QEvent, QObject, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QAction, QActionGroup, QBrush, QColor, QDesktopServices, QIcon, QKeySequence, QPageLayout,
     QPageSize, QPainter, QPdfWriter, QPixmap,
@@ -42,12 +45,18 @@ from .profile import build_profile, export_script, load_profile, save_profile
 from .recorder import CsvRecorder
 from .scheduler import ScheduleRunner
 from .sounds import alarm_pattern, korobeiniki, test_pattern, total_duration
+from .timesync import Clock, best_of, mjd
+
+
+class _NtpSignals(QObject):
+    done = Signal(object, str)   # SntpResult | None, Fehlermeldung
 from .settings import AppSettings
 from .settings_dialog import SettingsDialog
 from .theme import THEME_MODES, Theme, apply_theme, channel_color, resolve
 from .tile_window import TileWindow
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
+_logger = logging.getLogger("keithley3706a.gui")
 
 TIME_WINDOWS = [
     (60, "1 min"), (300, "5 min"), (900, "15 min"), (3600, "1 h"),
@@ -123,6 +132,13 @@ class MainWindow(QMainWindow):
         self.sound_muted = False
         self.alarm_acked = True
         self._last_alarm_sound = 0.0
+        # Zeitabgleich (SNTP): korrigiert Zeitstempel, ohne die Windows-Uhr zu verstellen
+        self.clock = Clock()
+        self.clock.correct = self.settings.ntp_correct
+        self._ntp_signals = _NtpSignals()
+        self._ntp_signals.done.connect(self._on_ntp)
+        self._ntp_running = False
+        self._ntp_failed = False
         self._busy = False
         self._error_state = False
         self._plot_dirty = False
@@ -161,6 +177,13 @@ class MainWindow(QMainWindow):
         self.tick = QTimer(self)
         self.tick.timeout.connect(self._on_tick)
         self.tick.start(1000)
+        self.ntp_timer = QTimer(self)
+        self.ntp_timer.timeout.connect(self._start_ntp)
+        self._configure_ntp()
+        self.clock_timer = QTimer(self)
+        self.clock_timer.timeout.connect(self._update_clock)
+        self.clock_timer.start(200)
+        self._update_clock()
 
     # ================================================================== UI-Aufbau
     def _build_ui(self) -> None:
@@ -200,6 +223,8 @@ class MainWindow(QMainWindow):
         self.setStatusBar(QStatusBar())
         self.heartbeat = QLabel()
         self.statusBar().addWidget(self.heartbeat)
+        self.time_label = QLabel()
+        self.statusBar().addPermanentWidget(self.time_label)
         self.status_info = QLabel()
         self.statusBar().addPermanentWidget(self.status_info)
 
@@ -258,6 +283,13 @@ class MainWindow(QMainWindow):
         self.status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.status_label.setMinimumWidth(220)
         row.addWidget(self.status_label, 1)
+
+        self.clock_label = QLabel()
+        self.clock_label.setTextFormat(Qt.RichText)
+        self.clock_label.setToolTip("Aktuelle Zeit (bei aktivem Zeitabgleich auf Serverzeit "
+                                    "korrigiert) – dieselbe Zeitbasis wie in der CSV")
+        row.addWidget(self.clock_label)
+        row.addSpacing(8)
 
         self.config_label = QLabel()
         self.config_label.setObjectName("Muted")
@@ -560,6 +592,8 @@ class MainWindow(QMainWindow):
 
         m = mb.addMenu("&Hilfe")
         self._act(m, "Tastenkürzel…", self._show_shortcuts, "F1")
+        self._act(m, "Protokoll- und Absturzberichte öffnen", self._open_log_dir,
+                  tip="Ordner mit app.log und crash_*.txt")
         self._act(m, "Über…", self._show_about)
 
         esc = QAction(self)
@@ -975,6 +1009,7 @@ class MainWindow(QMainWindow):
         self._busy = False
         self._error_state = False
         result = apply_offsets(raw, self.props)
+        result = ScanResult(self.clock.correct_timestamp(result.timestamp), result.readings)
         self.last_scan_time = time.time()
         self.last_scan_duration = duration
         self.last_readings = {r.channel: r for r in result.readings}
@@ -1033,11 +1068,112 @@ class MainWindow(QMainWindow):
         if self.schedule is not None:
             self._run_schedule(None)
         self._repeat_alarm_sounds()
+        if self._tick_count_mod(30):
+            self._update_time_label()   # "vor x min" aktuell halten
         if self.recorder is not None or self.schedule is not None:
             self._update_record_ui()
         self._tick_count = getattr(self, "_tick_count", 0) + 1
         if self.recorder is not None and self._tick_count % 60 == 0:
             self._check_disk_space()
+
+    def _tick_count_mod(self, n: int) -> bool:
+        return getattr(self, "_tick_count", 0) % n == 0
+
+    # ================================================================== Zeitabgleich
+    def _configure_ntp(self) -> None:
+        self.clock.correct = self.settings.ntp_correct
+        self.ntp_timer.stop()
+        if self.settings.ntp_enabled:
+            self.ntp_timer.start(max(1, self.settings.ntp_interval_min) * 60_000)
+            self._start_ntp()
+        self._update_time_label()
+
+    def _start_ntp(self) -> None:
+        if self._ntp_running or not self.settings.ntp_enabled:
+            return
+        servers = [s.strip() for s in self.settings.ntp_servers.split(",") if s.strip()]
+        self._ntp_running = True
+
+        def worker():
+            try:
+                self._ntp_signals.done.emit(best_of(servers), "")
+            except Exception as exc:
+                self._ntp_signals.done.emit(None, str(exc))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_ntp(self, result, error: str) -> None:
+        self._ntp_running = False
+        if result is None:
+            self.clock.last_error = error
+            if not self._ntp_failed:
+                self._log(f"Zeitabgleich fehlgeschlagen: {error}", "warn")
+            self._ntp_failed = True
+        else:
+            prev = self.clock.last
+            self.clock.update(result)
+            self._ntp_failed = False
+            change = abs(result.offset - prev.offset) if prev else None
+            if prev is None:
+                kind = "warn" if abs(result.offset) > 1.0 else "ok"
+                self._log(f"Zeitabgleich mit {result.server}: PC-Uhr weicht um "
+                          f"{result.offset * 1000:+.1f} ms ab"
+                          + (" – Zeitstempel werden korrigiert" if self.clock.correct else ""),
+                          kind)
+            elif change > 0.05:
+                self._log(f"Zeitabgleich: Abweichung jetzt {result.offset * 1000:+.1f} ms "
+                          f"(Änderung {change * 1000:.0f} ms)", "warn")
+                if self.recorder is not None and self.clock.correct:
+                    self.pending_events.append(
+                        f"Zeitkorrektur angepasst um {change * 1000:.0f} ms")
+        self._update_time_label()
+
+    def _update_clock(self) -> None:
+        now = self.clock.now()
+        local = datetime.fromtimestamp(now).astimezone()
+        off = local.strftime("%z")
+        off = f"UTC{off[:3]}:{off[3:]}"
+        synced = self.clock.correct and self.clock.synced()
+        mark = "✓" if synced else ""
+        muted = self._theme.text_muted
+        self.clock_label.setText(
+            f"<b>{local:%H:%M:%S}</b> <span style='color:{muted}'>{local:%d.%m.%Y} {off}"
+            f"{' ' + mark if mark else ''} · MJD</span> <b>{mjd(now):.5f}</b>")
+
+    def _time_basis(self) -> str:
+        r = self.clock.last
+        if r is not None and self.clock.correct and self.clock.synced():
+            return (f"PC-Uhr korrigiert per SNTP ({r.server}, Stratum {r.stratum}, "
+                    f"Abweichung {r.offset * 1000:+.1f} ms, Laufzeit {r.delay * 1000:.1f} ms)")
+        if r is not None and self.clock.synced():
+            return (f"PC-Uhr unkorrigiert (Abweichung zu {r.server}: "
+                    f"{r.offset * 1000:+.1f} ms)")
+        return "PC-Uhr, nicht mit Zeitserver abgeglichen"
+
+    def _update_time_label(self) -> None:
+        t = self._theme
+        r = self.clock.last
+        if not self.settings.ntp_enabled:
+            self.time_label.setText("🕒 Zeitabgleich aus")
+            self.time_label.setStyleSheet(f"color: {t.text_muted};")
+            self.time_label.setToolTip(self._time_basis())
+            return
+        if r is None:
+            txt = "🕒 Zeitabgleich …" if not self._ntp_failed else "🕒 Zeitserver nicht erreichbar"
+            color = t.warning if self._ntp_failed else t.text_muted
+        else:
+            age = (time.time() - r.when) / 60
+            mode = "korrigiert" if self.clock.correct else "nur gemessen"
+            txt = f"🕒 {r.server.split('.')[0]} {r.offset * 1000:+.0f} ms ({mode})"
+            color = (t.warning if (self._ntp_failed or not self.clock.synced()
+                                   or (not self.clock.correct and abs(r.offset) > 1.0))
+                     else t.text_muted)
+            txt += f" · vor {age:.0f} min"
+        self.time_label.setText(txt)
+        self.time_label.setStyleSheet(f"color: {color};")
+        self.time_label.setToolTip(self._time_basis()
+                                   + (f"\nLetzter Fehler: {self.clock.last_error}"
+                                      if self.clock.last_error else ""))
 
     # ================================================================== Speicherplatz
     DISK_WARN_BYTES = 1_000_000_000     # 1 GB: Warnung
@@ -1193,6 +1329,7 @@ class MainWindow(QMainWindow):
         t = self._theme
         color = {"error": t.danger, "alarm": t.danger, "warn": t.warning, "ok": t.success,
                  "marker": t.accent}.get(kind)
+        _logger.log({"error": 40, "alarm": 30, "warn": 30}.get(kind, 20), text)
         item = QListWidgetItem(f"{datetime.now():%H:%M:%S}  {text}")
         if color:
             item.setForeground(QColor(color))
@@ -1278,7 +1415,7 @@ class MainWindow(QMainWindow):
         self.vline.setPos(t[i])
         self.vline.show()
         unit = TEMP_UNITS[self.cfg.units]
-        parts = [datetime.fromtimestamp(t[i]).strftime("%H:%M:%S")]
+        parts = [f"{datetime.fromtimestamp(t[i]):%H:%M:%S} (MJD {mjd(t[i]):.5f})"]
         for ch, curve in self.curves.items():
             v = self.history.values(ch)
             if curve.isVisible() and v is not None and not math.isnan(v[i]):
@@ -1342,7 +1479,7 @@ class MainWindow(QMainWindow):
         if dlg.exec() != TextDialog.Accepted:
             return
         text = dlg.text() or f"Marker {len(self.markers) + 1}"
-        ts = time.time()
+        ts = self.clock.now()
         line = pg.InfiniteLine(pos=ts, angle=90, movable=False, label=f"⚑ {text}",
                                labelOpts={"position": 0.97, "anchors": [(1, 0), (1, 0)]})
         self._style_marker(line)
@@ -1494,7 +1631,11 @@ class MainWindow(QMainWindow):
                  "rotate_daily": self.settings.rotate_daily},
             alarm={"hysteresis": self.settings.alarm_hysteresis,
                    "open_is_alarm": self.settings.alarm_open},
-            note=self.note_edit.text().strip())
+            note=self.note_edit.text().strip(),
+            time_sync={"ntp_enabled": self.settings.ntp_enabled,
+                       "ntp_correct": self.settings.ntp_correct,
+                       "ntp_servers": [s.strip() for s in self.settings.ntp_servers.split(",")
+                                       if s.strip()]})
 
     def _profile_dir(self) -> str:
         return self.settings.last_profile_dir or self.settings.csv_folder
@@ -1612,6 +1753,7 @@ class MainWindow(QMainWindow):
             "Integrationszeit [PLC]": f"{c.nplc:g}",
             "Messintervall [s]": f"{self.settings.interval_s:g}",
             "Kanal-Konfiguration": "; ".join(special) or "Standard (keine Offsets)",
+            "Zeitbasis": self._time_basis(),
             "Rechner / Benutzer": f"{os.environ.get('COMPUTERNAME', '')} / "
                                   f"{os.environ.get('USERNAME', '')}",
             "Notiz": self.note_edit.text().strip(),
@@ -1646,7 +1788,8 @@ class MainWindow(QMainWindow):
                                         TEMP_UNITS[self.cfg.units], self._metadata(),
                                         self.settings.csv_format,
                                         prefix=self.settings.csv_prefix or "Temperaturen",
-                                        rotate_daily=self.settings.rotate_daily)
+                                        rotate_daily=self.settings.rotate_daily,
+                                        start_time=datetime.fromtimestamp(self.clock.now()))
             self._write_sidecar()
         except OSError as exc:
             QMessageBox.critical(self, "Speicherfehler",
@@ -1743,7 +1886,7 @@ class MainWindow(QMainWindow):
             return
         if sch.state == ScheduleRunner.WAITING and self.thread is None:
             return
-        action = sch.check(datetime.now(), readings)
+        action = sch.check(datetime.fromtimestamp(self.clock.now()), readings)
         if action == "start":
             self._log("Geplante Aufnahme startet")
             if not self._start_recording():
@@ -1766,6 +1909,7 @@ class MainWindow(QMainWindow):
         changed = new_cfg.channels != self.cfg.channels or new_cfg.units != self.cfg.units
         dlg.store(self.settings)
         self.mailer.config = self.settings.email
+        self._configure_ntp()
         self.alarms.hysteresis = self.settings.alarm_hysteresis
         self.alarms.open_is_alarm = self.settings.alarm_open
         self.cfg = new_cfg
@@ -1827,6 +1971,10 @@ class MainWindow(QMainWindow):
     # ================================================================== Hilfe
     def _show_shortcuts(self) -> None:
         QMessageBox.information(self, "Tastenkürzel", shortcut_help_html())
+
+    def _open_log_dir(self) -> None:
+        from .crashlog import log_dir
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir())))
 
     def _show_about(self) -> None:
         QMessageBox.about(

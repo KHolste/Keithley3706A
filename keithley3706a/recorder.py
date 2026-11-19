@@ -13,6 +13,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from .instrument import ScanResult
+from .timesync import iso_local, mjd
 
 CSV_FORMATS = {
     "excel_de": ("Excel (DE): Semikolon, Dezimalkomma", ";", ","),
@@ -20,6 +21,8 @@ CSV_FORMATS = {
 }
 
 EVENT_COLUMN = "Ereignis"
+TIMESTAMP_COLUMN = "Zeitstempel (ISO 8601, Ortszeit mit UTC-Offset)"
+MJD_COLUMN = "MJD (UTC)"
 
 
 class CsvRecorder:
@@ -70,14 +73,15 @@ class CsvRecorder:
         self._file_date = when.date()
         self.files.append(path)
         meta = dict(self.metadata)
-        meta["Aufnahmestart"] = self.start_time.isoformat(sep=" ", timespec="seconds")
+        meta["Aufnahmestart"] = iso_local(self.start_time.timestamp())
+        meta["MJD"] = "Modifiziertes Julianisches Datum = JD − 2400000,5 (Tage seit 17.11.1858 0 Uhr UTC)"
         if self.rotate_daily:
             meta["Teil"] = f"{part} (neue Datei je Kalendertag)"
             if part > 1:
                 meta["Vorherige Datei"] = self.files[-2].name
         for key, value in meta.items():
             self._writer.writerow([f"# {key}", value])
-        header = ["Zeitstempel", "Zeit seit Start [s]"]
+        header = [TIMESTAMP_COLUMN, MJD_COLUMN, "Zeit seit Start [s]"]
         for ch in self.channels:
             label = self.labels.get(ch, "").strip()
             name = f"{ch} {label}" if label else str(ch)
@@ -101,7 +105,8 @@ class CsvRecorder:
             self._fh.close()
             self._open_file(ts)
         values = {r.channel: r.value for r in result.readings}
-        row = [ts.isoformat(sep=" ", timespec="milliseconds"),
+        row = [iso_local(result.timestamp),
+               self._fmt(mjd(result.timestamp), 8),          # 8 Stellen ≈ 0,9 ms
                self._fmt(result.timestamp - self.start_time.timestamp(), 3)]
         row += [self._fmt(values.get(ch, float("nan"))) for ch in self.channels]
         row.append(event)

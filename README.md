@@ -75,7 +75,32 @@ Einstellungen werden in der Windows-Registry gespeichert (`HKCU\Software\JLU-Phy
 
 ## CSV-Format
 Standard „Excel (DE)“: Semikolon, Dezimalkomma, UTF-8 mit BOM. Kopfzeilen mit `#` enthalten die
-Metadaten. Leere Zellen = offenes Thermoelement. Letzte Spalte „Ereignis“.
+Metadaten (inkl. Zeitbasis). Leere Zellen = offenes Thermoelement. Letzte Spalte „Ereignis“.
+
+| Spalte | Beispiel | Bedeutung |
+|---|---|---|
+| Zeitstempel | `2026-11-19T15:45:45.795+01:00` | ISO 8601, Ortszeit mit UTC-Offset (eindeutig auch bei Zeitumstellung) |
+| MJD (UTC) | `61363,61511338` | Modifiziertes Julianisches Datum, 8 Nachkommastellen ≈ 0,9 ms |
+| Zeit seit Start [s] | `0,623` | Sekunden seit Aufnahmebeginn |
+
+## Zeitabgleich
+Die Zeit wird per SNTP mit `ntp1.uni-giessen.de` / `ntp2.uni-giessen.de` (Ersatz: `ptbtime1.ptb.de`)
+abgeglichen, standardmäßig alle 5 min. Die Windows-Uhr wird **nicht** verstellt (keine Adminrechte
+nötig); das Programm rechnet die gemessene Abweichung aus allen Zeitstempeln heraus. Status und
+Abweichung stehen in der Statusleiste, Uhrzeit und MJD laufend in der Kopfzeile.
+
+> Auf dem Messrechner ist der Windows-Zeitdienst deaktiviert; die PC-Uhr lag beim Test 2,3 s
+> daneben und driftet ca. 4 s/Tag. Empfehlung an die IT/Admin: `w32tm` aktivieren und auf die
+> JLU-Server stellen.
+
+## Protokoll und Absturzberichte
+Ordner: `%LOCALAPPDATA%\Keithley3706A-Monitor\logs` (Menü *Hilfe → Protokoll- und Absturzberichte*)
+- `app.log` – laufendes Protokoll (rotierend, max. 6 × 2 MB), inkl. Qt-Warnungen
+- `crash_gui_<Datum>.txt` – Bericht bei einem Fehler: Traceback, Zustand (Gerät, Aufnahme),
+  Versionen, letzte 200 Protokollzeilen. Das Programm läuft nach Python-Fehlern weiter.
+- Harte Abstürze (z. B. im VISA-Treiber) und unsauberes Beenden (Task-Manager, Stromausfall)
+  werden beim nächsten Start erkannt und gemeldet.
+- Eine laufende CSV-Aufnahme ist bei jedem Absturz bis zur letzten Zeile vollständig.
 
 ## Messprinzip (TSP)
 Pro Zyklus ein Scan über alle Kanäle (`scan.execute`), Ergebnis über ein einziges

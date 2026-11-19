@@ -97,6 +97,12 @@ class AppSettings:
     alarm_beep_freq = _prop("alarm/beep_freq", 2400, int)
     alarm_repeat_s = _prop("alarm/repeat_s", 30, int)
     last_profile_dir = _prop("ui/last_profile_dir", "")
+    ntp_enabled = _prop("time/ntp_enabled", True, bool)
+    ntp_correct = _prop("time/ntp_correct", True, bool)
+    ntp_servers = _prop("time/ntp_servers",
+                        "ntp1.uni-giessen.de, ntp2.uni-giessen.de, ptbtime1.ptb.de")
+    # PC-Uhr driftet hier ~2,7 ms/min (Windows-Zeitdienst aus) -> alle 5 min ≈ 15 ms max.
+    ntp_interval_min = _prop("time/ntp_interval_min", 5, int)
     del _prop
 
     @property

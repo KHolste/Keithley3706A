@@ -25,7 +25,8 @@ PROFILE_VERSION = 1
 def build_profile(*, resource: str, interval_s: float, cfg: MeasurementConfig,
                   props: dict[int, ChannelProps], labels: dict[int, str],
                   hidden: set[int] | None = None, csv: dict | None = None,
-                  alarm: dict | None = None, note: str = "") -> dict:
+                  alarm: dict | None = None, note: str = "",
+                  time_sync: dict | None = None) -> dict:
     meas = asdict(cfg)
     meas["channels"] = format_channel_list(cfg.channels)
     meas.pop("channel_types", None)  # steckt in channel_props
@@ -42,6 +43,7 @@ def build_profile(*, resource: str, interval_s: float, cfg: MeasurementConfig,
         "hidden_channels": sorted(hidden or []),
         "csv": csv or {},
         "alarm": alarm or {},
+        "time": time_sync or {},
     }
 
 

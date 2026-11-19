@@ -182,6 +182,35 @@ class SettingsDialog(QDialog):
         f.addRow("", self.alarm_open)
         tabs.addTab(w, "Alarme")
 
+        # ------------------------------------------------------------ Zeit
+        w = QWidget()
+        f = QFormLayout(w)
+        self.ntp_enabled = QCheckBox("Zeit regelmäßig mit Zeitserver abgleichen (SNTP)")
+        self.ntp_enabled.setChecked(settings.ntp_enabled)
+        f.addRow("", self.ntp_enabled)
+        self.ntp_servers = QLineEdit(settings.ntp_servers)
+        self.ntp_servers.setToolTip("Mehrere Server mit Komma trennen; der erste erreichbare "
+                                    "wird verwendet.")
+        f.addRow("Zeitserver:", self.ntp_servers)
+        self.ntp_interval = QSpinBox()
+        self.ntp_interval.setRange(1, 1440)
+        self.ntp_interval.setSuffix(" min")
+        self.ntp_interval.setValue(settings.ntp_interval_min)
+        f.addRow("Abgleich alle:", self.ntp_interval)
+        self.ntp_correct = QCheckBox("Zeitstempel auf Serverzeit korrigieren")
+        self.ntp_correct.setChecked(settings.ntp_correct)
+        self.ntp_correct.setToolTip("Die Windows-Uhr wird nicht verstellt (keine Adminrechte "
+                                    "nötig); das Programm rechnet die Abweichung heraus.")
+        f.addRow("", self.ntp_correct)
+        from PySide6.QtWidgets import QPushButton as _QPB
+        ntp_btn = _QPB("Jetzt prüfen")
+        self.ntp_result = _muted("")
+        ntp_btn.clicked.connect(self._check_ntp)
+        f.addRow(ntp_btn, self.ntp_result)
+        f.addRow("", _muted("Zeitstempel in der CSV: ISO 8601 mit UTC-Offset "
+                            "(z. B. 2026-11-19T14:22:41.412+01:00) und MJD (UTC)."))
+        tabs.addTab(w, "Zeit")
+
         # ------------------------------------------------------------ E-Mail
         em = settings.email
         w = QWidget()
@@ -273,7 +302,26 @@ class SettingsDialog(QDialog):
         self._mailer.notify("test", "Keithley 3706A – Test-Mail",
                             "Diese Test-Mail bestätigt die E-Mail-Einstellungen.", force=True)
 
+    def server_list(self) -> list[str]:
+        return [s.strip() for s in self.ntp_servers.text().replace(";", ",").split(",")
+                if s.strip()]
+
+    def _check_ntp(self) -> None:
+        from .timesync import best_of
+        from PySide6.QtWidgets import QApplication
+        self.ntp_result.setText("Frage Zeitserver ab …")
+        QApplication.processEvents()
+        try:
+            r = best_of(self.server_list(), samples=2)
+            self.ntp_result.setText(f"{r.server}: PC-Uhr weicht um {r.offset * 1000:+.1f} ms ab "
+                                    f"(Laufzeit {r.delay * 1000:.1f} ms, Stratum {r.stratum})")
+        except OSError as exc:
+            self.ntp_result.setText(str(exc))
+
     def _accept(self) -> None:
+        if self.ntp_enabled.isChecked() and not self.server_list():
+            QMessageBox.warning(self, "Zeitserver", "Bitte mindestens einen Zeitserver angeben.")
+            return
         try:
             parse_channel_list(self.channels.text())
         except ValueError as exc:
@@ -317,3 +365,7 @@ class SettingsDialog(QDialog):
         settings.alarm_tray = self.alarm_tray.isChecked()
         settings.alarm_open = self.alarm_open.isChecked()
         settings.email = self.email_config()
+        settings.ntp_enabled = self.ntp_enabled.isChecked()
+        settings.ntp_correct = self.ntp_correct.isChecked()
+        settings.ntp_servers = ", ".join(self.server_list())
+        settings.ntp_interval_min = self.ntp_interval.value()

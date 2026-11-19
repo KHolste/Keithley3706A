@@ -40,8 +40,13 @@ def test_recorder_excel_de(tmp_path):
     lines = rec.path.read_text(encoding="utf-8-sig").splitlines()
     assert lines[0] == "# Typ;K"
     assert lines[1].startswith("# Aufnahmestart;")
-    assert lines[2] == "Zeitstempel;Zeit seit Start [s];1001 Ofen [°C];1002 [°C];Ereignis"
-    assert lines[3].endswith(";1,500;24,5000;;")
+    header = [l for l in lines if l.startswith("Zeitstempel")][0]
+    assert header == ("Zeitstempel (ISO 8601, Ortszeit mit UTC-Offset);MJD (UTC);"
+                      "Zeit seit Start [s];1001 Ofen [°C];1002 [°C];Ereignis")
+    row = lines[lines.index(header) + 1].split(";")
+    assert row[0][10] == "T" and row[0][-6] in "+-" and row[0][-3] == ":"   # ISO mit Offset
+    assert row[1].startswith("6") and len(row[1].split(",")[1]) == 8        # MJD, 8 Stellen
+    assert row[2:] == ["1,500", "24,5000", "", ""]
 
 
 def test_history_ring():

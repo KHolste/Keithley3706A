@@ -133,6 +133,35 @@ def test_sound_sequences():
     assert alarm_pattern("low", 2000)[0][1] > alarm_pattern("low", 2000)[1][1]     # fallend
 
 
+def test_mjd_and_iso():
+    from datetime import timezone
+    from keithley3706a.timesync import iso_local, mjd
+    assert mjd(0) == pytest.approx(40587.0)
+    j2000 = datetime(2000, 1, 1, 12, 0, tzinfo=timezone.utc).timestamp()
+    assert mjd(j2000) == pytest.approx(51544.5)
+    s = iso_local(j2000)
+    assert datetime.fromisoformat(s).timestamp() == pytest.approx(j2000)
+    assert s[-6] in "+-"
+
+
+def test_clock_correction():
+    import time as _t
+    from keithley3706a.timesync import Clock, SntpResult
+    c = Clock()
+    c.update(SntpResult("x", offset=2.5, delay=0.001, stratum=2, when=_t.time()))
+    assert c.now() == pytest.approx(_t.time(), abs=0.05)        # Korrektur aus
+    c.correct = True
+    assert c.now() - _t.time() == pytest.approx(2.5, abs=0.05)
+    pc = _t.time() - 1.0
+    assert c.correct_timestamp(pc) - pc == pytest.approx(2.5, abs=0.05)
+
+
+def test_sntp_packet_roundtrip():
+    from keithley3706a.timesync import _from_ntp, _to_ntp
+    t = 1_763_560_000.123456
+    assert _from_ntp(*_to_ntp(t)) == pytest.approx(t, abs=1e-6)
+
+
 def test_secret_roundtrip():
     assert decrypt(encrypt("geheim äö")) == "geheim äö"
     assert encrypt("") == "" and decrypt("") == ""

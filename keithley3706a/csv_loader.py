@@ -54,11 +54,14 @@ def load_csv(path: str | Path) -> LoadedFile:
     rows = list(csv.reader(lines[header_idx:], delimiter=delimiter))
     header, data = rows[0], [r for r in rows[1:] if r and r[0].strip()]
     event_col = header.index(EVENT_COLUMN) if EVENT_COLUMN in header else None
-    value_cols = [i for i in range(2, len(header)) if i != event_col]
+    # Zeitspalten (Zeitstempel, MJD, Zeit seit Start) überspringen – alte und neue Dateien
+    value_cols = [i for i in range(1, len(header))
+                  if i != event_col and not header[i].startswith(("Zeit", "MJD"))]
 
     times = []
     for r in data:
         try:
+            # ISO mit oder ohne UTC-Offset (ältere Dateien: ohne -> Ortszeit)
             times.append(datetime.fromisoformat(r[0].strip()).timestamp())
         except ValueError:
             times.append(np.nan)
